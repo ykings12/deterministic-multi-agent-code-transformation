@@ -1,0 +1,125 @@
+import ast
+from typing import Dict, List
+
+
+class Reviewer:
+    def __init__(self, debug: bool = False):
+        """
+        Reviewer validates LLM output.
+
+        Acts as SAFETY LAYER between LLM and system.
+        """
+
+        self.debug = debug
+
+    def review(self, original_context: List[Dict], llm_output: str) -> Dict:
+        issues = []
+        score = 0
+
+        # -----------------------------
+        # FORMAT CHECK
+        # -----------------------------
+        if not llm_output.strip().startswith("FILE:"):
+            issues.append("Invalid format: Missing FILE header")
+            return self._result(False, score, issues)
+
+        score += 1
+
+        # -----------------------------
+        # PARSE OUTPUT
+        # -----------------------------
+        files = self._parse_output(llm_output)
+
+        if not files:
+            issues.append("No files parsed from output")
+            return self._result(False, score, issues)
+
+        # -----------------------------
+        # SYNTAX CHECK
+        # -----------------------------
+        for file_name, code in files.items():
+            try:
+                ast.parse(code)
+                score += 1
+            except SyntaxError:
+                issues.append(f"Syntax error in {file_name}")
+
+        # -----------------------------
+        # LOGIC + BEHAVIOR CHECK
+        # -----------------------------
+        for item in original_context:
+            file_name = item["file"]
+            original_code = item["code"]
+            new_code = files.get(file_name)
+
+            if not new_code:
+                continue
+
+            if self._major_change(original_code, new_code):
+                issues.append(f"Logic change detected in {file_name}")
+
+            if self._call_change(original_code, new_code):
+                issues.append(f"Function call change in {file_name}")
+
+        return self._result(len(issues) == 0, score, issues)
+
+    # -----------------------------
+    # HELPERS
+    # -----------------------------
+
+    def _parse_output(self, output: str) -> Dict[str, str]:
+        files = {}
+        current_file = None
+        code_lines = []
+
+        for line in output.split("\n"):
+            if line.startswith("FILE:"):
+                if current_file:
+                    files[current_file] = "\n".join(code_lines).strip()
+                current_file = line.replace("FILE:", "").strip()
+                code_lines = []
+            else:
+                code_lines.append(line)
+
+        if current_file:
+            files[current_file] = "\n".join(code_lines).strip()
+
+        return files
+
+    def _major_change(self, old: str, new: str) -> bool:
+        try:
+            old_tree = ast.parse(old)
+            new_tree = ast.parse(new)
+        except Exception:
+            return True
+
+        return self._extract_returns(old_tree) != self._extract_returns(new_tree)
+
+    def _call_change(self, old: str, new: str) -> bool:
+        try:
+            old_tree = ast.parse(old)
+            new_tree = ast.parse(new)
+        except Exception:
+            return True
+
+        return self._extract_calls(old_tree) != self._extract_calls(new_tree)
+
+    def _extract_returns(self, tree):
+        return [
+            ast.dump(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Return) and node.value
+        ]
+
+    def _extract_calls(self, tree):
+        calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    calls.append(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    calls.append(node.func.attr)
+        return sorted(calls)
+
+    def _result(self, valid: bool, score: int, issues: List[str]) -> Dict:
+        return {"valid": valid, "score": score, "issues": issues}
