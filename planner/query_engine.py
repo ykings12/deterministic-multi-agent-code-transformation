@@ -4,14 +4,14 @@ from typing import List, Dict, Any
 class QueryEngine:
     def __init__(self, codebase_map: Dict[str, Any]):
         """
-        QueryEngine selects most relevant files for a given user query.
-
-        Input:
-        - codebase_map → output of CodebaseMap
+        Improved QueryEngine using:
+        - File names
+        - AST (functions)
+        - Call Graph (relationships)
+        - Dependency Graph
 
         WHY?
-        → LLM should not see entire repo
-        → Only most relevant files should be selected
+        → More intelligent context selection
         """
 
         self.map = codebase_map
@@ -21,14 +21,9 @@ class QueryEngine:
         Main function.
 
         Steps:
-        1. Extract keywords from query
-        2. Score each file
-        3. Sort by score
-        4. Return top_k files
-
-        Example:
-        query = "helper function"
-        → ["utils.py"]
+        1. Extract keywords
+        2. Score files using multiple signals
+        3. Return top_k files
         """
 
         keywords = self._extract_keywords(user_query)
@@ -42,48 +37,70 @@ class QueryEngine:
 
             scores.append((file_path, score))
 
-        # Sort descending
         scores.sort(key=lambda x: x[1], reverse=True)
 
-        return [file for file, _ in scores[:top_k]]
+        # Filter out irrelevant files (score <= 0)
+        filtered = [file for file, score in scores if score > 0]
+
+        return filtered[:top_k]
 
     def _extract_keywords(self, query: str) -> List[str]:
-        """
-        Convert query → keywords
-
-        Example:
-        "optimize sorting function"
-        → ["optimize", "sorting", "function"]
-        """
         return query.lower().split()
 
     def _compute_score(self, file: Dict, keywords: List[str]) -> float:
         """
-        Scoring formula:
+        Improved scoring:
 
-        score = keyword_match + dependency_score - size_penalty
-
-        WHY:
-        → balance relevance + importance + cost
+        score =
+            file_name_match +
+            function_match +
+            call_graph_match +
+            dependency_score -
+            size_penalty
         """
 
         file_path = file["path"]
 
-        keyword_score = self._keyword_match(file_path, keywords)
+        file_score = self._file_name_match(file_path, keywords)
+        function_score = self._function_match(file_path, keywords)
+        call_score = self._call_graph_match(file_path, keywords)
         dependency_score = self._dependency_score(file_path)
         size_penalty = file["size"] / 1000
 
-        return keyword_score + dependency_score - size_penalty
+        return file_score + function_score + call_score + dependency_score - size_penalty
 
-    def _keyword_match(self, file_path: str, keywords: List[str]) -> int:
-        """
-        Match keywords with file name
-        """
+    def _file_name_match(self, file_path: str, keywords: List[str]) -> int:
         return sum(1 for kw in keywords if kw in file_path.lower())
 
+    def _function_match(self, file_path: str, keywords: List[str]) -> int:
+        """
+        Match keywords with function names (AST)
+        """
+        functions = self.map["ast"].get(file_path, {}).get("functions", [])
+
+        score = 0
+        for func in functions:
+            for kw in keywords:
+                if kw in func["name"].lower():
+                    score += 2  # higher weight
+
+        return score
+
+    def _call_graph_match(self, file_path: str, keywords: List[str]) -> int:
+        """
+        Match based on function calls
+        """
+        score = 0
+
+        for func_key, calls in self.map["call_graph"].items():
+            if func_key.startswith(file_path):
+                for call in calls:
+                    for kw in keywords:
+                        if kw in call.lower():
+                            score += 1
+
+        return score
+
     def _dependency_score(self, file_path: str) -> int:
-        """
-        More dependencies → more important file
-        """
         deps = self.map["dependencies"].get(file_path, [])
         return len(deps)

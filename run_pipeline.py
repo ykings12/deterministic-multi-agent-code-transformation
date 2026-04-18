@@ -17,7 +17,9 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         print(f"📁 Temp Repo: {tmp}\n")
 
-        # Step 1: Create sample repo
+        # -----------------------------------
+        # STEP 1: Create sample repo
+        # -----------------------------------
         create_file(os.path.join(tmp, "utils.py"), """
 def helper():
     return "hello"
@@ -30,36 +32,57 @@ def run():
     helper()
 """)
 
-        print("✅ Files created: utils.py, main.py\n")
+        create_file(os.path.join(tmp, "math_ops.py"), """
+def add(a, b):
+    return a + b
+""")
 
-        # Step 2: Build Codebase Map
+        print("✅ Files created: utils.py, main.py, math_ops.py\n")
+
+        # -----------------------------------
+        # STEP 2: Build Codebase Map
+        # -----------------------------------
         cb = CodebaseMap(tmp)
         code_map = cb.build()
 
         print("📦 CODEBASE MAP:")
         print(code_map)
-        print("\n" + "-"*50 + "\n")
+        print("\n" + "="*60 + "\n")
 
-        # Step 3: Query
+        # -----------------------------------
+        # STEP 3: Test multiple queries
+        # -----------------------------------
         engine = QueryEngine(code_map)
-        selected_files = engine.query("helper")
 
-        print("🔍 SELECTED FILES:")
-        print(selected_files)
-        print("\n" + "-"*50 + "\n")
+        queries = [
+            "helper",     # should match utils.py + main.py
+            "run",        # should match main.py
+            "add",        # should match math_ops.py
+        ]
 
-        # Step 4: Context Builder
-        builder = ContextBuilder(code_map, tmp)
-        context = builder.build_context(selected_files)
+        for query in queries:
+            print(f"🔍 QUERY: '{query}'")
 
-        print("📜 FINAL CONTEXT (LLM INPUT):\n")
-        for item in context:
-            print(f"File: {item['file']}")
-            print("Code:")
-            print(item["code"])
-            print("Functions:", item["functions"])
-            print("\n" + "-"*30 + "\n")
+            selected_files = engine.query(query)
 
+            print("➡️ Selected Files:", selected_files)
+
+            # -----------------------------------
+            # STEP 4: Context Builder
+            # -----------------------------------
+            builder = ContextBuilder(code_map, tmp)
+            context = builder.build_context(selected_files)
+
+            print("\n📜 CONTEXT:\n")
+
+            for item in context:
+                print(f"📄 File: {item['file']}")
+                print("Code:")
+                print(item["code"])
+                print("Functions:", [f["name"] for f in item["functions"]])
+                print("-" * 40)
+
+            print("\n" + "="*60 + "\n")
 
 if __name__ == "__main__":
     main()
