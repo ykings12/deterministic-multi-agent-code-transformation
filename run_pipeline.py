@@ -4,6 +4,7 @@ import tempfile
 from core.codebase_map import CodebaseMap
 from planner.query_engine import QueryEngine
 from planner.context_builder import ContextBuilder
+from executor.executor import Executor
 
 
 def create_file(path, content=""):
@@ -12,10 +13,9 @@ def create_file(path, content=""):
 
 
 def main():
-    print("🚀 Running End-to-End Pipeline...\n")
+    print("🚀 Running Pipeline...\n")
 
     with tempfile.TemporaryDirectory() as tmp:
-        print(f"📁 Temp Repo: {tmp}\n")
 
         # -----------------------------------
         # STEP 1: Create sample repo
@@ -37,52 +37,37 @@ def add(a, b):
     return a + b
 """)
 
-        print("✅ Files created: utils.py, main.py, math_ops.py\n")
-
         # -----------------------------------
         # STEP 2: Build Codebase Map
         # -----------------------------------
         cb = CodebaseMap(tmp)
         code_map = cb.build()
 
-        print("📦 CODEBASE MAP:")
-        print(code_map)
-        print("\n" + "="*60 + "\n")
-
         # -----------------------------------
-        # STEP 3: Test multiple queries
+        # STEP 3: Query Engine
         # -----------------------------------
         engine = QueryEngine(code_map)
+        builder = ContextBuilder(code_map, tmp)
 
-        queries = [
-            "helper",     # should match utils.py + main.py
-            "run",        # should match main.py
-            "add",        # should match math_ops.py
-        ]
+        queries = ["helper", "run", "add"]
+
+        # Executor (DEBUG OFF for clean output)
+        executor = Executor(use_llm=True, debug=False)
 
         for query in queries:
-            print(f"🔍 QUERY: '{query}'")
+            print(f"\n🔍 Query: {query}")
 
             selected_files = engine.query(query)
 
-            print("➡️ Selected Files:", selected_files)
-
-            # -----------------------------------
-            # STEP 4: Context Builder
-            # -----------------------------------
-            builder = ContextBuilder(code_map, tmp)
             context = builder.build_context(selected_files)
 
-            print("\n📜 CONTEXT:\n")
+            result = executor.run(context, f"Optimize code for: {query}")
 
-            for item in context:
-                print(f"📄 File: {item['file']}")
-                print("Code:")
-                print(item["code"])
-                print("Functions:", [f["name"] for f in item["functions"]])
-                print("-" * 40)
+            print("\n🤖 Output:\n")
+            print(result[0]["suggestion"])
 
-            print("\n" + "="*60 + "\n")
+            print("\n" + "-" * 50)
+
 
 if __name__ == "__main__":
     main()
