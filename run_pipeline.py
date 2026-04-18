@@ -5,6 +5,7 @@ from core.codebase_map import CodebaseMap
 from planner.query_engine import QueryEngine
 from planner.context_builder import ContextBuilder
 from executor.executor import Executor
+from planner.context_budget import ContextBudget
 from reviewer.reviewer import Reviewer
 
 
@@ -39,28 +40,77 @@ def build_feedback(issues):
 
 
 def main():
-    print("🚀 Running Pipeline...\n")
+    print("🚀 Running Pipeline (Bigger Repo Test)...\n")
 
     with tempfile.TemporaryDirectory() as tmp:
 
         # -----------------------------
-        # CREATE FILES
+        # CREATE BIGGER REPO
         # -----------------------------
+
+        # utils
         create_file(os.path.join(tmp, "utils.py"), """
 def helper():
     return "hello"
 """)
 
-        create_file(os.path.join(tmp, "main.py"), """
-import utils
-
-def run():
-    helper()
-""")
-
+        # math
         create_file(os.path.join(tmp, "math_ops.py"), """
 def add(a, b):
     return a + b
+
+def multiply(a, b):
+    return a * b
+""")
+
+        # string utils
+        create_file(os.path.join(tmp, "string_utils.py"), """
+def format_text(s):
+    return s.strip().lower()
+""")
+
+        # data processing
+        create_file(os.path.join(tmp, "data_processor.py"), """
+import utils
+import string_utils
+
+def process():
+    text = utils.helper()
+    return string_utils.format_text(text)
+""")
+
+        # service layer
+        create_file(os.path.join(tmp, "service.py"), """
+import data_processor
+
+def serve():
+    return data_processor.process()
+""")
+
+        # controller
+        create_file(os.path.join(tmp, "controller.py"), """
+import service
+
+def handle_request():
+    return service.serve()
+""")
+
+        # main
+        create_file(os.path.join(tmp, "main.py"), """
+import controller
+
+def run():
+    return controller.handle_request()
+""")
+
+        # unrelated file
+        create_file(os.path.join(tmp, "logger.py"), """
+def log(msg):
+    print(msg)
+""")
+
+        create_file(os.path.join(tmp, "config.py"), """
+DEBUG = True
 """)
 
         # -----------------------------
@@ -69,19 +119,28 @@ def add(a, b):
         cb = CodebaseMap(tmp)
         code_map = cb.build()
 
-        engine = QueryEngine(code_map)
         builder = ContextBuilder(code_map, tmp)
-
         executor = Executor(use_llm=True, debug=False)
         reviewer = Reviewer()
 
-        queries = ["helper", "run", "add"]
-        MAX_RETRIES = 4
+        queries = [
+            "helper",
+            "process data",
+            "handle request",
+            "add numbers"
+        ]
+
+        MAX_RETRIES = 3
 
         for query in queries:
             print(f"\n🔍 Query: {query}")
 
-            selected_files = engine.query(query)
+            budget = ContextBudget(code_map)
+
+            selected_files = budget.select_top_k(query, k=2)
+
+            print("📂 Selected Files:", selected_files)
+
             context = builder.build_context(selected_files)
 
             attempt = 0
@@ -117,7 +176,7 @@ def add(a, b):
             if not success:
                 print("\n❌ FAILED AFTER RETRIES\n")
 
-            print("\n" + "-" * 50)
+            print("\n" + "=" * 60)
 
 
 if __name__ == "__main__":
