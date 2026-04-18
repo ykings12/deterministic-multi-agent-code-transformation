@@ -8,6 +8,11 @@ class Reviewer:
         Reviewer validates LLM output.
 
         Acts as SAFETY LAYER between LLM and system.
+        Ensures:
+        → Correct format
+        → No syntax errors
+        → No logic/behavior changes
+        → No unauthorized file modifications
         """
 
         self.debug = debug
@@ -17,7 +22,7 @@ class Reviewer:
         score = 0
 
         # -----------------------------
-        # FORMAT CHECK
+        # 1. FORMAT CHECK
         # -----------------------------
         if not llm_output.strip().startswith("FILE:"):
             issues.append("Invalid format: Missing FILE header")
@@ -26,18 +31,35 @@ class Reviewer:
         score += 1
 
         # -----------------------------
-        # PARSE OUTPUT
+        # 2. PARSE OUTPUT
         # -----------------------------
-        files = self._parse_output(llm_output)
+        try:
+            files = self._parse_output(llm_output)
+        except ValueError as e:
+            issues.append(str(e))
+            return self._result(False, score, issues)
 
         if not files:
             issues.append("No files parsed from output")
             return self._result(False, score, issues)
 
         # -----------------------------
-        # SYNTAX CHECK
+        # 3. VALIDATE FILE SCOPE
+        # -----------------------------
+        allowed_files = {item["file"] for item in original_context}
+
+        for file_name in files.keys():
+            if file_name not in allowed_files:
+                issues.append(f"Unauthorized file modification: {file_name}")
+
+        # -----------------------------
+        # 4. SYNTAX CHECK
         # -----------------------------
         for file_name, code in files.items():
+            if not code.strip():
+                issues.append(f"Empty code in {file_name}")
+                continue
+
             try:
                 ast.parse(code)
                 score += 1
@@ -45,13 +67,14 @@ class Reviewer:
                 issues.append(f"Syntax error in {file_name}")
 
         # -----------------------------
-        # LOGIC + BEHAVIOR CHECK
+        # 5. LOGIC + BEHAVIOR CHECK
         # -----------------------------
         for item in original_context:
             file_name = item["file"]
             original_code = item["code"]
             new_code = files.get(file_name)
 
+            # If file not modified → skip
             if not new_code:
                 continue
 
@@ -63,39 +86,77 @@ class Reviewer:
 
         return self._result(len(issues) == 0, score, issues)
 
-    # -----------------------------
+    # =========================================================
     # HELPERS
-    # -----------------------------
+    # =========================================================
 
     def _parse_output(self, output: str) -> Dict[str, str]:
+        """
+        Parse LLM output into:
+        file → code
+
+        Also detects duplicate file outputs.
+        """
+
         files = {}
         current_file = None
         code_lines = []
+        seen_files = set()
 
         for line in output.split("\n"):
             if line.startswith("FILE:"):
                 if current_file:
+                    if current_file in seen_files:
+                        raise ValueError(f"Duplicate file output: {current_file}")
+
                     files[current_file] = "\n".join(code_lines).strip()
+                    seen_files.add(current_file)
+
                 current_file = line.replace("FILE:", "").strip()
                 code_lines = []
             else:
                 code_lines.append(line)
 
         if current_file:
+            if current_file in seen_files:
+                raise ValueError(f"Duplicate file output: {current_file}")
+
             files[current_file] = "\n".join(code_lines).strip()
 
         return files
 
     def _major_change(self, old: str, new: str) -> bool:
+        """
+        Detect logic change using AST:
+        → return values
+        → function definitions
+        """
+
         try:
             old_tree = ast.parse(old)
             new_tree = ast.parse(new)
         except Exception:
+            return True  # unsafe
+
+        # Normalize identical code
+        if self._normalize_code(old) == self._normalize_code(new):
+            return False
+
+        # Check return values
+        if self._extract_returns(old_tree) != self._extract_returns(new_tree):
             return True
 
-        return self._extract_returns(old_tree) != self._extract_returns(new_tree)
+        # Check function structure
+        if self._extract_functions(old_tree) != self._extract_functions(new_tree):
+            return True
+
+        return False
 
     def _call_change(self, old: str, new: str) -> bool:
+        """
+        Detect function call changes (side effects)
+        """
+
         try:
             old_tree = ast.parse(old)
             new_tree = ast.parse(new)
@@ -103,6 +164,10 @@ class Reviewer:
             return True
 
         return self._extract_calls(old_tree) != self._extract_calls(new_tree)
+
+    # -----------------------------
+    # AST EXTRACTORS
+    # -----------------------------
 
     def _extract_returns(self, tree):
         return [
@@ -113,13 +178,50 @@ class Reviewer:
 
     def _extract_calls(self, tree):
         calls = []
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
                     calls.append(node.func.id)
                 elif isinstance(node.func, ast.Attribute):
                     calls.append(node.func.attr)
+
         return sorted(calls)
 
+    def _extract_functions(self, tree):
+        return sorted([
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        ])
+
+    # -----------------------------
+    # NORMALIZATION
+    # -----------------------------
+
+    def _normalize_code(self, code: str) -> str:
+        """
+        Normalize code to avoid false positives
+        """
+        return "\n".join(
+            line.strip()
+            for line in code.splitlines()
+            if line.strip()
+        )
+
+    # -----------------------------
+    # FINAL RESULT
+    # -----------------------------
+
     def _result(self, valid: bool, score: int, issues: List[str]) -> Dict:
-        return {"valid": valid, "score": score, "issues": issues}
+        if self.debug:
+            print("\n[REVIEW DEBUG]")
+            print("Valid:", valid)
+            print("Score:", score)
+            print("Issues:", issues)
+
+        return {
+            "valid": valid,
+            "score": score,
+            "issues": issues
+        }

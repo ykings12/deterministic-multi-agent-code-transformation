@@ -11,34 +11,24 @@ load_dotenv()
 class Executor:
     def __init__(self, use_llm: bool = False, provider: str = "groq", debug: bool = False):
         """
-        Executor runs LLM to generate code improvements.
-
-        Features:
-        → Provider-agnostic
-        → Rate-limited
-        → Debug-controlled logging
+        Executor:
+        → Calls LLM safely
+        → Enforces rate limiting
+        → Prevents output explosion
         """
 
         self.use_llm = use_llm
         self.provider = provider
-        self.debug = debug
         self.prompt_builder = PromptBuilder()
+        self.debug = debug
 
-        # Rate limiter: 25 calls per minute
         self.rate_limiter = RateLimiter(max_calls=25, period=60)
 
     def run(self, context: List[Dict], task: str) -> List[Dict]:
-        """
-        Main execution function
-        """
-
         prompt = self.prompt_builder.build_prompt(context, task)
 
-        # ✅ Debug logging only
         if self.debug:
-            print("\n🧠 PROMPT SENT TO LLM:\n")
-            print(prompt[:500])
-            print("\n" + "-" * 60)
+            print("\n🧠 PROMPT:\n", prompt[:500])
 
         if self.use_llm:
             response = self._call_llm(prompt)
@@ -48,51 +38,38 @@ class Executor:
         return [{"suggestion": response}]
 
     def _mock_llm(self) -> str:
-        if self.debug:
-            print("⚠️ Using MOCK LLM")
-        return "Mocked improvement: Optimize functions"
+        return "FILE: main.py\ndef run():\n    pass"
 
     def _call_llm(self, prompt: str) -> str:
-        """
-        Generic LLM caller with rate limiting
-        """
-
         if not self.rate_limiter.allow():
-            raise Exception("🚫 Rate limit exceeded. Try again later.")
-
-        if self.debug:
-            print(f"🚀 Calling REAL LLM using provider: {self.provider}")
+            raise Exception("🚫 Rate limit exceeded")
 
         if self.provider == "groq":
-            return self._call_groq_provider(prompt)
+            return self._call_groq(prompt)
 
-        raise ValueError(f"Unsupported LLM provider: {self.provider}")
+        raise ValueError("Unsupported provider")
 
-    def _call_groq_provider(self, prompt: str) -> str:
-        """
-        Groq API call
-        """
-
+    def _call_groq(self, prompt: str) -> str:
         from groq import Groq
 
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
-            raise ValueError("❌ GROQ_API_KEY not found in environment")
+            raise ValueError("Missing GROQ_API_KEY")
 
         client = Groq(api_key=api_key)
-
-        if self.debug:
-            print("📡 Sending request to Groq API...")
 
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,   # deterministic
             top_p=1.0,
-            max_tokens=800     # reduced for tighter output
+            max_tokens=500     # 🔥 prevent explosion
         )
 
-        if self.debug:
-            print("✅ Response received")
+        output = response.choices[0].message.content.strip()
 
-        return response.choices[0].message.content.strip()
+        # 🚨 EXPLOSION GUARD
+        if output.count("FILE:") > 10:
+            raise Exception("🚫 LLM output explosion detected")
+
+        return output

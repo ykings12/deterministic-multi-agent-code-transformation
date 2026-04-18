@@ -14,22 +14,27 @@ def create_file(path, content=""):
 
 
 def build_feedback(issues):
-    """
-    Convert reviewer issues → actionable instructions
-    """
-
-    instructions = "REVIEW FEEDBACK:\n"
+    instructions = "\nREVIEW FEEDBACK:\n"
 
     for issue in issues:
+
+        if "Invalid format" in issue:
+            instructions += "- Use EXACT format: FILE: <filename>\n"
+
+        if "Duplicate file" in issue:
+            instructions += "- Each file must appear ONLY ONCE\n"
+
         if "Logic change" in issue:
             instructions += "- DO NOT change return values\n"
-            instructions += "- Preserve original behavior exactly\n"
+            instructions += "- Preserve behavior exactly\n"
 
         if "Function call change" in issue:
-            instructions += "- DO NOT change function calls\n"
-            instructions += "- DO NOT add print/logging\n"
+            instructions += "- DO NOT modify function calls\n"
 
-    instructions += "\nFix the code.\n"
+        if "Unauthorized file" in issue:
+            instructions += "- ONLY modify allowed files\n"
+
+    instructions += "\nFix ALL issues in ONE response.\n"
     return instructions
 
 
@@ -71,7 +76,7 @@ def add(a, b):
         reviewer = Reviewer()
 
         queries = ["helper", "run", "add"]
-        MAX_RETRIES = 2
+        MAX_RETRIES = 4
 
         for query in queries:
             print(f"\n🔍 Query: {query}")
@@ -81,19 +86,19 @@ def add(a, b):
 
             attempt = 0
             success = False
+            feedback = ""
 
             while attempt < MAX_RETRIES:
 
-                # 🔥 UPDATED TASK
-                result = executor.run(
-                    context,
-                    f"Refactor code WITHOUT changing behavior: {query}"
-                )
+                task = f"Refactor code WITHOUT changing behavior: {query}\n{feedback}"
 
-                review = reviewer.review(context, result[0]["suggestion"])
+                result = executor.run(context, task)
+                output = result[0]["suggestion"]
+
+                review = reviewer.review(context, output)
 
                 print("\n🤖 LLM OUTPUT:\n")
-                print(result[0]["suggestion"])
+                print(output)
 
                 print("\n🔍 REVIEW RESULT:")
                 print(review)
@@ -105,11 +110,7 @@ def add(a, b):
 
                 print("\n🔁 Retrying...\n")
 
-                # 🔥 STRONG FEEDBACK
-                context.append({
-                    "file": "REVIEW_FEEDBACK",
-                    "code": build_feedback(review["issues"])
-                })
+                feedback = build_feedback(review["issues"])
 
                 attempt += 1
 
