@@ -2,12 +2,13 @@ import os
 import tempfile
 
 from core.codebase_map import CodebaseMap
-from planner.query_engine import QueryEngine
 from planner.context_builder import ContextBuilder
-from executor.executor import Executor
 from planner.context_budget import ContextBudget
-from reviewer.reviewer import Reviewer
 from planner.function_selector import FunctionSelector
+from planner.planner import Planner
+from executor.executor import Executor
+from executor.step_executor import StepExecutor
+from reviewer.reviewer import Reviewer
 
 
 def create_file(path, content=""):
@@ -16,6 +17,10 @@ def create_file(path, content=""):
 
 
 def build_feedback(issues):
+    """
+    Convert reviewer issues into precise LLM instructions.
+    """
+
     instructions = "\nREVIEW FEEDBACK:\n"
 
     for issue in issues:
@@ -47,15 +52,13 @@ def build_feedback(issues):
 
 
 def main():
-    print("🚀 Running Pipeline (Bigger Repo Test)...\n")
+    print("🚀 Running Pipeline (Day 12 - Multi-Step Planning)...\n")
 
     with tempfile.TemporaryDirectory() as tmp:
 
         # -----------------------------
         # CREATE BIGGER REPO
         # -----------------------------
-
-        # utils
         create_file(
             os.path.join(tmp, "utils.py"),
             """
@@ -64,7 +67,6 @@ def helper():
 """,
         )
 
-        # math
         create_file(
             os.path.join(tmp, "math_ops.py"),
             """
@@ -76,7 +78,6 @@ def multiply(a, b):
 """,
         )
 
-        # string utils
         create_file(
             os.path.join(tmp, "string_utils.py"),
             """
@@ -85,7 +86,6 @@ def format_text(s):
 """,
         )
 
-        # data processing
         create_file(
             os.path.join(tmp, "data_processor.py"),
             """
@@ -98,7 +98,6 @@ def process():
 """,
         )
 
-        # service layer
         create_file(
             os.path.join(tmp, "service.py"),
             """
@@ -109,7 +108,6 @@ def serve():
 """,
         )
 
-        # controller
         create_file(
             os.path.join(tmp, "controller.py"),
             """
@@ -120,7 +118,6 @@ def handle_request():
 """,
         )
 
-        # main
         create_file(
             os.path.join(tmp, "main.py"),
             """
@@ -131,7 +128,6 @@ def run():
 """,
         )
 
-        # unrelated file
         create_file(
             os.path.join(tmp, "logger.py"),
             """
@@ -154,74 +150,92 @@ DEBUG = True
         code_map = cb.build()
 
         builder = ContextBuilder(code_map, tmp)
+        budget = ContextBudget(code_map)
+        selector = FunctionSelector(code_map)
+
         executor = Executor(use_llm=True, debug=False)
+        step_executor = StepExecutor(executor)
+        planner = Planner()
         reviewer = Reviewer()
 
         queries = ["helper", "process data", "handle request", "add numbers"]
 
         MAX_RETRIES = 3
 
+        # -----------------------------
+        # PIPELINE LOOP
+        # -----------------------------
         for query in queries:
             print(f"\n🔍 Query: {query}")
 
-            budget = ContextBudget(code_map)
-
+            # -----------------------------
+            # STEP 1: Context Selection
+            # -----------------------------
             selected_files = budget.select_top_k(query, k=1)
-
             print("📂 Selected Files:", selected_files)
-
-            selector = FunctionSelector(code_map)
 
             selected_functions = selector.select_functions(selected_files, query)
 
             if selected_functions:
                 context = builder.build_function_context(selected_functions)
             else:
-                context = builder.build_context(selected_files)  # fallback
+                context = builder.build_context(selected_files)
 
-            attempt = 0
-            success = False
-            feedback = ""
+            print("\n📦 Context:\n", context)
 
-            while attempt < MAX_RETRIES:
+            # -----------------------------
+            # STEP 2: Planning
+            # -----------------------------
+            plan = planner.create_plan(query, selected_files)
 
-                task = f"Refactor code WITHOUT changing behavior: {query}\n{feedback}"
+            print("\n🧠 PLAN:")
+            for step in plan:
+                print(step)
 
-                result = executor.run(context, task)
-                output = result[0]["suggestion"]
+            # -----------------------------
+            # STEP 3: Execute Plan
+            # -----------------------------
+            for step in plan:
+                print(f"\n🪜 STEP: {step}")
 
-                # -----------------------------
-                # ✅ NO-OP CHECK (ADD HERE)
-                # -----------------------------
-                if not output.strip():
-                    print("\n🤖 LLM OUTPUT: (no changes)\n")
-                    print("\n✅ ACCEPTED\n")
-                    success = True
+                attempt = 0
+                step_success = False
+                feedback = ""
+
+                # ONLY SHOWING FIXED PART (inside loop)
+
+                while attempt < MAX_RETRIES:
+
+                    task = f"{step['type']} on {step['target']} WITHOUT changing behavior\n{feedback}"
+
+                    # ✅ FIX: pass task
+                    step_output = step_executor.execute_step(context, step, task)
+
+                    # NO-OP
+                    if not step_output.strip():
+                        print("\n🤖 STEP OUTPUT: (no changes)")
+                        print("✅ STEP ACCEPTED\n")
+                        step_success = True
+                        break
+
+                    review = reviewer.review(context, step_output)
+
+                    print("\n🤖 STEP OUTPUT:\n", step_output)
+                    print("\n🔍 REVIEW:", review)
+
+                    if review["valid"]:
+                        print("\n✅ STEP ACCEPTED\n")
+                        step_success = True
+                        break
+
+                    print("\n🔁 Retrying step...\n")
+
+                    feedback = build_feedback(review["issues"])
+                    attempt += 1
+
+                if not step_success:
+                    print("\n❌ STEP FAILED\n")
                     break
-
-                # print("\n Context:\n", context)
-
-                review = reviewer.review(context, output)
-
-                print("\n🤖 LLM OUTPUT:\n")
-                print(output)
-
-                print("\n🔍 REVIEW RESULT:")
-                print(review)
-
-                if review["valid"]:
-                    print("\n✅ ACCEPTED\n")
-                    success = True
-                    break
-
-                print("\n🔁 Retrying...\n")
-
-                feedback = build_feedback(review["issues"])
-
-                attempt += 1
-
-            if not success:
-                print("\n❌ FAILED AFTER RETRIES\n")
 
             print("\n" + "=" * 60)
 
