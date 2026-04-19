@@ -62,7 +62,7 @@ class Executor:
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,   # deterministic
-            top_p=1.0,
+            top_p=0.9,
             max_tokens=500     # 🔥 prevent explosion
         )
 

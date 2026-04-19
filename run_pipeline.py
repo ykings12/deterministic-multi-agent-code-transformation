@@ -20,22 +20,26 @@ def build_feedback(issues):
     for issue in issues:
 
         if "Invalid format" in issue:
-            instructions += "- Use EXACT format: FILE: <filename>\n"
+            instructions += "- Your previous response was correct BUT missing 'FILE:' headers.\n"
+            instructions += "- DO NOT change code, ONLY fix format.\n"
 
-        if "Duplicate file" in issue:
-            instructions += "- Each file must appear ONLY ONCE\n"
+        elif "Duplicate file" in issue:
+            instructions += "- You repeated the same file multiple times.\n"
+            instructions += "- Output EACH file exactly once.\n"
 
-        if "Logic change" in issue:
-            instructions += "- DO NOT change return values\n"
-            instructions += "- Preserve behavior exactly\n"
+        elif "Logic change" in issue:
+            instructions += f"- You changed logic: {issue}\n"
+            instructions += "- Revert to original logic EXACTLY.\n"
 
-        if "Function call change" in issue:
-            instructions += "- DO NOT modify function calls\n"
+        elif "Function call change" in issue:
+            instructions += "- Do NOT modify function calls.\n"
 
-        if "Unauthorized file" in issue:
-            instructions += "- ONLY modify allowed files\n"
+        elif "Unauthorized file" in issue:
+            instructions += "- You modified a file not in context.\n"
+            instructions += "- Only modify provided files.\n"
 
-    instructions += "\nFix ALL issues in ONE response.\n"
+    instructions += "\nFix ALL issues WITHOUT introducing new ones.\n"
+
     return instructions
 
 
@@ -137,7 +141,7 @@ DEBUG = True
 
             budget = ContextBudget(code_map)
 
-            selected_files = budget.select_top_k(query, k=2)
+            selected_files = budget.select_top_k(query, k=1)
 
             print("📂 Selected Files:", selected_files)
 
@@ -153,6 +157,15 @@ DEBUG = True
 
                 result = executor.run(context, task)
                 output = result[0]["suggestion"]
+
+                # -----------------------------
+                # ✅ NO-OP CHECK (ADD HERE)
+                # -----------------------------
+                if not output.strip():
+                    print("\n🤖 LLM OUTPUT: (no changes)\n")
+                    print("\n✅ ACCEPTED\n")
+                    success = True
+                    break
 
                 review = reviewer.review(context, output)
 

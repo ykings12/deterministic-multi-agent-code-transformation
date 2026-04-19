@@ -22,6 +22,12 @@ class Reviewer:
         score = 0
 
         # -----------------------------
+        # ✅ NO-OP CHECK (ADD HERE)
+        # -----------------------------
+        if not llm_output.strip():
+            return self._result(True, 1, [])
+
+        # -----------------------------
         # 1. FORMAT CHECK
         # -----------------------------
         if not llm_output.strip().startswith("FILE:"):
@@ -127,30 +133,30 @@ class Reviewer:
 
     def _major_change(self, old: str, new: str) -> bool:
         """
-        Detect logic change using AST:
-        → return values
-        → function definitions
+        Improved logic check:
+        → Avoid false positives for equivalent code
         """
 
         try:
             old_tree = ast.parse(old)
             new_tree = ast.parse(new)
         except Exception:
-            return True  # unsafe
+            return True
 
-        # Normalize identical code
+        # ✅ Exact match after normalization → safe
         if self._normalize_code(old) == self._normalize_code(new):
             return False
 
-        # Check return values
-        if self._extract_returns(old_tree) != self._extract_returns(new_tree):
+        # ✅ Compare sorted returns (fix false positives)
+        if sorted(self._extract_returns(old_tree)) != sorted(self._extract_returns(new_tree)):
             return True
 
-        # Check function structure
+        # ✅ Compare function names (structure)
         if self._extract_functions(old_tree) != self._extract_functions(new_tree):
             return True
 
         return False
+
 
     def _call_change(self, old: str, new: str) -> bool:
         """

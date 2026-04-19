@@ -4,24 +4,24 @@ from typing import List, Dict, Any
 class ContextBudget:
     def __init__(self, codebase_map: Dict[str, Any]):
         """
-        ContextBudget decides WHICH files go to LLM.
+        Smart context selector using:
+        - File names
+        - AST (functions)
+        - Call graph
+        - Dependencies
 
-        WHY?
-        → LLM context is expensive
-        → We must send only relevant files
-
-        INPUT:
-        codebase_map = {
-            "files": [...],
-            "dependencies": {...}
-        }
+        GOAL:
+        → Send ONLY relevant files to LLM
         """
 
         self.map = codebase_map
 
     def select_top_k(self, query: str, k: int = 3) -> List[str]:
         """
-        Select top-k files AND include their dependencies
+        Select top-k MOST relevant files.
+
+        IMPORTANT:
+        → Do NOT blindly expand dependencies (causes explosion)
         """
 
         keywords = self._extract_keywords(query)
@@ -30,93 +30,89 @@ class ContextBudget:
 
         for file in self.map["files"]:
             file_path = file["path"]
+
             score = self._compute_score(file, keywords)
+
             scored_files.append((file_path, score))
 
-        # Sort
+        # Sort descending
         scored_files.sort(key=lambda x: x[1], reverse=True)
 
-        # Step 1: pick top-k
-        top_files = [file for file, _ in scored_files[:k]]
+        # ✅ Only pick top-k STRICTLY
+        top_files = [file for file, score in scored_files[:k] if score > 0]
 
-        # Step 2: include dependencies
+        # ✅ LIMITED dependency expansion (controlled)
         expanded = set(top_files)
 
         for file in top_files:
             deps = self.map.get("dependencies", {}).get(file, [])
-            expanded.update(deps)
+
+            # 🔥 ONLY include 1-level dependencies
+            for dep in deps[:1]:  # limit explosion
+                expanded.add(dep)
 
         return list(expanded)
 
     # -----------------------------
-    # SCORING COMPONENTS
+    # SCORING
     # -----------------------------
 
     def _compute_score(self, file: Dict, keywords: List[str]) -> float:
-        """
-        Final scoring formula:
-
-        score = keyword_match + dependency_score - size_penalty
-        """
-
         file_path = file["path"]
 
-        keyword_score = self._keyword_match(file_path, keywords)
+        file_score = self._file_name_match(file_path, keywords)
+        function_score = self._function_match(file_path, keywords)
+        call_score = self._call_graph_match(file_path, keywords)
         dependency_score = self._dependency_score(file_path)
-        size_penalty = self._size_penalty(file["size"])
+        size_penalty = file["size"] / 1000
 
-        return keyword_score + dependency_score - size_penalty
+        return file_score + function_score + call_score + dependency_score - size_penalty
 
-    def _keyword_match(self, file_path: str, keywords: List[str]) -> int:
+    def _file_name_match(self, file_path: str, keywords: List[str]) -> int:
+        return sum(1 for kw in keywords if kw in file_path.lower())
+
+    def _function_match(self, file_path: str, keywords: List[str]) -> int:
         """
-        Counts how many keywords match file path
-
-        Example:
-        query = "add"
-        file = math_ops.py → match → +1
+        🔥 AST-based scoring
         """
 
-        file_path = file_path.lower()
+        functions = self.map["ast"].get(file_path, {}).get("functions", [])
 
-        return sum(1 for kw in keywords if kw in file_path)
+        score = 0
+
+        for func in functions:
+            for kw in keywords:
+                if kw in func["name"].lower():
+                    score += 3  # HIGH weight
+
+        return score
+
+    def _call_graph_match(self, file_path: str, keywords: List[str]) -> int:
+        """
+        🔥 Call graph scoring
+        """
+
+        score = 0
+
+        for func_key, calls in self.map["call_graph"].items():
+            if func_key.startswith(file_path):
+                for call in calls:
+                    for kw in keywords:
+                        if kw in call.lower():
+                            score += 1
+
+        return score
 
     def _dependency_score(self, file_path: str) -> int:
-        """
-        Boost score if file has dependencies
-
-        WHY?
-        → Files with dependencies are more important
-        """
-
-        deps = self.map.get("dependencies", {}).get(file_path, [])
-
-        return len(deps)
-
-    def _size_penalty(self, size: int) -> float:
-        """
-        Penalize large files
-
-        WHY?
-        → Large files = more tokens = expensive
-        """
-
-        return size / 1000  # normalize
+        return len(self.map.get("dependencies", {}).get(file_path, []))
 
     def _extract_keywords(self, query: str) -> List[str]:
         """
-        Simple keyword extraction
-
-        Example:
-        "optimize add function" → ["optimize", "add", "function"]
+        Better keyword extraction
         """
 
-        return query.lower().split()
-    
-    def _reverse_dependencies(self, file_path):
-        reverse = []
-
-        for f, deps in self.map.get("dependencies", {}).items():
-            if file_path in deps:
-                reverse.append(f)
-
-        return reverse
+        return [
+            word.strip().lower()
+            for word in query.split()
+            if len(word) > 2  # remove noise like "to", "of"
+        ]
