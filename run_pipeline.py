@@ -9,6 +9,7 @@ from planner.planner import Planner
 from executor.executor import Executor
 from executor.step_executor import StepExecutor
 from reviewer.reviewer import Reviewer
+from editor.file_editor import FileEditor  # ✅ NEW
 
 
 def create_file(path, content=""):
@@ -52,9 +53,11 @@ def build_feedback(issues):
 
 
 def main():
-    print("🚀 Running Pipeline (Day 13 - Multi-Step Planning)...\n")
+    print("🚀 Running Pipeline (Day 18 - Edit Layer Added)...\n")
 
-    with tempfile.TemporaryDirectory() as tmp:
+    # with tempfile.TemporaryDirectory() as tmp:
+    tmp = "./test_repo"
+    os.makedirs(tmp, exist_ok=True)
 
         # -----------------------------
         # CREATE BIGGER REPO
@@ -157,6 +160,7 @@ DEBUG = True
         step_executor = StepExecutor(executor)
         planner = Planner(code_map)
         reviewer = Reviewer()
+        editor = FileEditor(tmp)  # ✅ NEW
 
         queries = ["helper", "process data", "handle request", "add numbers"]
 
@@ -204,7 +208,6 @@ DEBUG = True
 
                 while attempt < MAX_RETRIES:
 
-                    # 🔥 CRITICAL FIX → isolate context per step
                     step_context = [c for c in context if c["file"] == step["target"]]
 
                     task = f"{step['type']} on {step['target']} WITHOUT changing behavior\n{feedback}"
@@ -227,6 +230,10 @@ DEBUG = True
 
                     if review["valid"]:
                         print("\n✅ STEP ACCEPTED\n")
+
+                        # 🔥 APPLY CHANGES HERE
+                        editor.apply_changes(output)
+
                         success = True
                         break
 
