@@ -52,7 +52,7 @@ def build_feedback(issues):
 
 
 def main():
-    print("🚀 Running Pipeline (Day 12 - Multi-Step Planning)...\n")
+    print("🚀 Running Pipeline (Day 13 - Multi-Step Planning)...\n")
 
     with tempfile.TemporaryDirectory() as tmp:
 
@@ -155,7 +155,7 @@ DEBUG = True
 
         executor = Executor(use_llm=True, debug=False)
         step_executor = StepExecutor(executor)
-        planner = Planner()
+        planner = Planner(code_map)
         reviewer = Reviewer()
 
         queries = ["helper", "process data", "handle request", "add numbers"]
@@ -186,46 +186,48 @@ DEBUG = True
             # -----------------------------
             # STEP 2: Planning
             # -----------------------------
-            plan = planner.create_plan(query, selected_files)
+            steps = planner.create_plan(query, selected_files)
 
             print("\n🧠 PLAN:")
-            for step in plan:
+            for step in steps:
                 print(step)
 
             # -----------------------------
             # STEP 3: Execute Plan
             # -----------------------------
-            for step in plan:
+            for step in steps:
                 print(f"\n🪜 STEP: {step}")
 
                 attempt = 0
-                step_success = False
+                success = False
                 feedback = ""
-
-                # ONLY SHOWING FIXED PART (inside loop)
 
                 while attempt < MAX_RETRIES:
 
+                    # 🔥 CRITICAL FIX → isolate context per step
+                    step_context = [c for c in context if c["file"] == step["target"]]
+
                     task = f"{step['type']} on {step['target']} WITHOUT changing behavior\n{feedback}"
 
-                    # ✅ FIX: pass task
-                    step_output = step_executor.execute_step(context, step, task)
+                    output = step_executor.execute_step(step_context, step, task)
 
-                    # NO-OP
-                    if not step_output.strip():
-                        print("\n🤖 STEP OUTPUT: (no changes)")
+                    # -----------------------------
+                    # NO-OP HANDLING
+                    # -----------------------------
+                    if not output.strip():
+                        print("\n🤖 OUTPUT: (no changes)")
                         print("✅ STEP ACCEPTED\n")
-                        step_success = True
+                        success = True
                         break
 
-                    review = reviewer.review(context, step_output)
+                    review = reviewer.review(step_context, output)
 
-                    print("\n🤖 STEP OUTPUT:\n", step_output)
+                    print("\n🤖 STEP OUTPUT:\n", output)
                     print("\n🔍 REVIEW:", review)
 
                     if review["valid"]:
                         print("\n✅ STEP ACCEPTED\n")
-                        step_success = True
+                        success = True
                         break
 
                     print("\n🔁 Retrying step...\n")
@@ -233,7 +235,7 @@ DEBUG = True
                     feedback = build_feedback(review["issues"])
                     attempt += 1
 
-                if not step_success:
+                if not success:
                     print("\n❌ STEP FAILED\n")
                     break
 

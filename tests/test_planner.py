@@ -1,18 +1,22 @@
 from planner.planner import Planner
 
 
-def test_simple_plan():
-    planner = Planner()
+def test_primary_selection():
+    code_map = {"dependencies": {}}
+    planner = Planner(code_map)
 
-    plan = planner.create_plan("refactor code", ["a.py"])
+    files = ["utils.py", "data_processor.py"]
 
-    assert len(plan) == 1
-    assert plan[0]["type"] == "refactor"
+    primary = planner._get_primary_file("process data", files)
+
+    assert primary == "data_processor.py"
 
 
-def test_rename_plan():
-    planner = Planner()
+def test_dependency_expansion():
+    code_map = {"dependencies": {"a.py": ["b.py"], "b.py": []}}
 
-    plan = planner.create_plan("rename function", ["a.py", "b.py"])
+    planner = Planner(code_map)
 
-    assert len(plan) == 2
+    result = planner._expand_dependencies("a.py")
+
+    assert "b.py" in result
