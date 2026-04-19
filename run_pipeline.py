@@ -7,6 +7,7 @@ from planner.context_builder import ContextBuilder
 from executor.executor import Executor
 from planner.context_budget import ContextBudget
 from reviewer.reviewer import Reviewer
+from planner.function_selector import FunctionSelector
 
 
 def create_file(path, content=""):
@@ -20,7 +21,9 @@ def build_feedback(issues):
     for issue in issues:
 
         if "Invalid format" in issue:
-            instructions += "- Your previous response was correct BUT missing 'FILE:' headers.\n"
+            instructions += (
+                "- Your previous response was correct BUT missing 'FILE:' headers.\n"
+            )
             instructions += "- DO NOT change code, ONLY fix format.\n"
 
         elif "Duplicate file" in issue:
@@ -53,69 +56,96 @@ def main():
         # -----------------------------
 
         # utils
-        create_file(os.path.join(tmp, "utils.py"), """
+        create_file(
+            os.path.join(tmp, "utils.py"),
+            """
 def helper():
     return "hello"
-""")
+""",
+        )
 
         # math
-        create_file(os.path.join(tmp, "math_ops.py"), """
+        create_file(
+            os.path.join(tmp, "math_ops.py"),
+            """
 def add(a, b):
     return a + b
 
 def multiply(a, b):
     return a * b
-""")
+""",
+        )
 
         # string utils
-        create_file(os.path.join(tmp, "string_utils.py"), """
+        create_file(
+            os.path.join(tmp, "string_utils.py"),
+            """
 def format_text(s):
     return s.strip().lower()
-""")
+""",
+        )
 
         # data processing
-        create_file(os.path.join(tmp, "data_processor.py"), """
+        create_file(
+            os.path.join(tmp, "data_processor.py"),
+            """
 import utils
 import string_utils
 
 def process():
     text = utils.helper()
     return string_utils.format_text(text)
-""")
+""",
+        )
 
         # service layer
-        create_file(os.path.join(tmp, "service.py"), """
+        create_file(
+            os.path.join(tmp, "service.py"),
+            """
 import data_processor
 
 def serve():
     return data_processor.process()
-""")
+""",
+        )
 
         # controller
-        create_file(os.path.join(tmp, "controller.py"), """
+        create_file(
+            os.path.join(tmp, "controller.py"),
+            """
 import service
 
 def handle_request():
     return service.serve()
-""")
+""",
+        )
 
         # main
-        create_file(os.path.join(tmp, "main.py"), """
+        create_file(
+            os.path.join(tmp, "main.py"),
+            """
 import controller
 
 def run():
     return controller.handle_request()
-""")
+""",
+        )
 
         # unrelated file
-        create_file(os.path.join(tmp, "logger.py"), """
+        create_file(
+            os.path.join(tmp, "logger.py"),
+            """
 def log(msg):
     print(msg)
-""")
+""",
+        )
 
-        create_file(os.path.join(tmp, "config.py"), """
+        create_file(
+            os.path.join(tmp, "config.py"),
+            """
 DEBUG = True
-""")
+""",
+        )
 
         # -----------------------------
         # BUILD SYSTEM
@@ -127,12 +157,7 @@ DEBUG = True
         executor = Executor(use_llm=True, debug=False)
         reviewer = Reviewer()
 
-        queries = [
-            "helper",
-            "process data",
-            "handle request",
-            "add numbers"
-        ]
+        queries = ["helper", "process data", "handle request", "add numbers"]
 
         MAX_RETRIES = 3
 
@@ -145,7 +170,14 @@ DEBUG = True
 
             print("📂 Selected Files:", selected_files)
 
-            context = builder.build_context(selected_files)
+            selector = FunctionSelector(code_map)
+
+            selected_functions = selector.select_functions(selected_files, query)
+
+            if selected_functions:
+                context = builder.build_function_context(selected_functions)
+            else:
+                context = builder.build_context(selected_files)  # fallback
 
             attempt = 0
             success = False
@@ -166,6 +198,8 @@ DEBUG = True
                     print("\n✅ ACCEPTED\n")
                     success = True
                     break
+
+                # print("\n Context:\n", context)
 
                 review = reviewer.review(context, output)
 

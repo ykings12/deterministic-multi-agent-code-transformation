@@ -62,3 +62,26 @@ def test_multiple_files():
         result = builder.build_context(["a.py", "b.py"])
 
         assert len(result) == 2
+
+
+def test_function_context(tmp_path):
+    file = tmp_path / "test.py"
+
+    file.write_text("""
+def helper():
+    return "hello"
+
+def other():
+    return "bye"
+""")
+
+    codebase_map = {}
+
+    builder = ContextBuilder(codebase_map, str(tmp_path))
+
+    selected = [{"file": "test.py", "function": "helper"}]
+
+    context = builder.build_function_context(selected)
+
+    assert "helper" in context[0]["code"]
+    assert "other" not in context[0]["code"]

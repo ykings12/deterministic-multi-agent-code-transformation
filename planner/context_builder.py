@@ -2,72 +2,56 @@ import os
 from typing import List, Dict, Any
 
 
+import os
+from typing import List, Dict
+
+
 class ContextBuilder:
-    def __init__(self, codebase_map: Dict[str, Any], repo_path: str):
-        """
-        Context Builder prepares LLM-ready input.
-
-        Inputs:
-        - codebase_map → full system understanding
-        - repo_path → to read actual files
-
-        WHY separate class?
-        → Clean separation between selection and packaging
-        """
-
+    def __init__(self, codebase_map: Dict, repo_path: str):
         self.map = codebase_map
         self.repo_path = repo_path
 
-    def build_context(self, selected_files: List[str]) -> List[Dict]:
+    def build_function_context(self, selected_functions: List[Dict]) -> List[Dict]:
         """
-        Main function:
-        Builds structured context for LLM
-
-        Output format:
-        [
-            {
-                "file": "a.py",
-                "code": "...",
-                "functions": [...]
-            }
-        ]
-
-        WHY structured format?
-        → LLM understands structured input better
-        → Enables precise edits later
+        Build context ONLY for selected functions.
         """
 
         context = []
 
-        for file_path in selected_files:
-            full_path = os.path.join(self.repo_path, file_path)
+        for item in selected_functions:
+            file_path = os.path.join(self.repo_path, item["file"])
 
-            # Read actual file content
-            code = self._read_file(full_path)
+            with open(file_path, "r") as f:
+                code = f.read()
 
-            # Extract AST metadata
-            ast_data = self.map["ast"].get(file_path, {})
+            function_code = self._extract_function_code(code, item["function"])
 
             context.append({
-                "file": file_path,
-                "code": code,
-                "functions": ast_data.get("functions", []),
-                "classes": ast_data.get("classes", [])
+                "file": item["file"],
+                "code": function_code,
+                "functions": [item["function"]]
             })
 
         return context
 
-    def _read_file(self, file_path: str) -> str:
+    def _extract_function_code(self, code: str, function_name: str) -> str:
         """
-        Reads file safely.
-
-        WHY separate function?
-        → Easier testing
-        → Handles errors gracefully
+        Naive extraction (can improve later using AST spans)
         """
 
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            return ""
+        lines = code.split("\n")
+        capture = False
+        result = []
+
+        for line in lines:
+            if line.strip().startswith(f"def {function_name}"):
+                capture = True
+
+            if capture:
+                result.append(line)
+
+                if line.strip() == "":
+                    break
+
+        return "\n".join(result)
+    
