@@ -27,25 +27,25 @@ def build_feedback(issues):
     for issue in issues:
 
         if "Invalid format" in issue:
-            instructions += (
-                "- Your previous response was correct BUT missing 'FILE:' headers.\n"
-            )
-            instructions += "- DO NOT change code, ONLY fix format.\n"
+            instructions += "- CRITICAL ERROR: Missing FILE header.\n"
+            instructions += "- REPEAT the SAME code but add EXACT format:\n"
+            instructions += "FILE: <filename>\n"
+            instructions += "- DO NOT change ANY code.\n"
+            instructions += "- ONLY fix format.\n"
 
         elif "Duplicate file" in issue:
-            instructions += "- You repeated the same file multiple times.\n"
-            instructions += "- Output EACH file exactly once.\n"
+            instructions += "- You repeated files.\n"
+            instructions += "- Output EACH file ONLY ONCE.\n"
 
         elif "Logic change" in issue:
             instructions += f"- You changed logic: {issue}\n"
-            instructions += "- Revert to original logic EXACTLY.\n"
+            instructions += "- Restore ORIGINAL logic EXACTLY.\n"
 
         elif "Function call change" in issue:
             instructions += "- Do NOT modify function calls.\n"
 
         elif "Unauthorized file" in issue:
-            instructions += "- You modified a file not in context.\n"
-            instructions += "- Only modify provided files.\n"
+            instructions += "- Only modify files in context.\n"
 
     instructions += "\nFix ALL issues WITHOUT introducing new ones.\n"
 
@@ -55,9 +55,7 @@ def build_feedback(issues):
 def main():
     print("🚀 Running Pipeline (Day 18 - Edit Layer Added)...\n")
 
-    # with tempfile.TemporaryDirectory() as tmp:
-    tmp = "./test_repo"
-    os.makedirs(tmp, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
 
         # -----------------------------
         # CREATE BIGGER REPO
@@ -213,6 +211,12 @@ DEBUG = True
                     task = f"{step['type']} on {step['target']} WITHOUT changing behavior\n{feedback}"
 
                     output = step_executor.execute_step(step_context, step, task)
+
+                    # 🔥 FORCE FORMAT FIX MODE (very important)
+                    if "Invalid format" in feedback:
+                        task += (
+                            "\nREMEMBER: You MUST start output with FILE: <filename>"
+                        )
 
                     # -----------------------------
                     # NO-OP HANDLING
