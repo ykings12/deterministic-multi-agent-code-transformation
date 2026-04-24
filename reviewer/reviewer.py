@@ -7,6 +7,7 @@ class Reviewer:
         self.debug = debug
 
     def review(self, original_context: List[Dict], llm_output: str) -> Dict:
+
         issues = []
         score = 0
 
@@ -16,36 +17,71 @@ class Reviewer:
         if not llm_output.strip():
             return self._result(True, 1, [])
 
-        # -----------------------------
-        # 1. FORMAT CHECK
-        # -----------------------------
-        if not llm_output.strip().startswith("FILE:"):
-            issues.append("Invalid format: Missing FILE header")
+        # -------------------------------------------------
+        # 🔥 STRICT FORMAT DETECTION
+        # -------------------------------------------------
+        has_file = "FILE:" in llm_output
+        has_edit = "EDIT:" in llm_output
+
+        # ❌ MIXED FORMAT (HARD FAIL)
+        if has_file and has_edit:
+            issues.append("Mixed FILE and EDIT format detected — NOT allowed")
             return self._result(False, score, issues)
 
-        score += 1
+        is_edit = has_edit
+
+        # -----------------------------
+        # 1. FORMAT CHECK (FILE only)
+        # -----------------------------
+        if not is_edit:
+            if not llm_output.strip().startswith("FILE:"):
+                issues.append("Invalid format: Missing FILE header")
+                return self._result(False, score, issues)
+
+            score += 1
 
         # -----------------------------
         # 2. PARSE OUTPUT
         # -----------------------------
-        try:
-            files = self._parse_output(llm_output)
-        except ValueError as e:
-            issues.append(str(e))
-            return self._result(False, score, issues)
+        files = {}
 
-        if not files:
-            issues.append("No files parsed from output")
-            return self._result(False, score, issues)
+        if is_edit:
+            try:
+                files = self._parse_edit_output(llm_output)
+            except Exception:
+                issues.append("Invalid EDIT format")
+                return self._result(False, score, issues)
+        else:
+            try:
+                files = self._parse_output(llm_output)
+            except ValueError as e:
+                issues.append(str(e))
+                return self._result(False, score, issues)
+
+            if not files:
+                issues.append("No files parsed from output")
+                return self._result(False, score, issues)
+
+        # -----------------------------
+        # 🔥 FORCE EDIT USAGE
+        # -----------------------------
+        for item in original_context:
+            file_name = item["file"]
+            functions = item.get("functions", [])
+
+            if not is_edit and file_name in files:
+                if functions:
+                    issues.append(f"Must use EDIT format for functions in {file_name}")
 
         # -----------------------------
         # 3. FILE SCOPE CHECK
         # -----------------------------
-        allowed_files = {item["file"] for item in original_context}
+        if not is_edit:
+            allowed_files = {item["file"] for item in original_context}
 
-        for file_name in files.keys():
-            if file_name not in allowed_files:
-                issues.append(f"Unauthorized file modification: {file_name}")
+            for file_name in files.keys():
+                if file_name not in allowed_files:
+                    issues.append(f"Unauthorized file modification: {file_name}")
 
         # -----------------------------
         # 4. SYNTAX CHECK
@@ -58,7 +94,7 @@ class Reviewer:
                 issues.append(f"Syntax error in {file_name}")
 
         # -----------------------------
-        # 5. LOGIC CHECK
+        # 5. LOGIC + CALL CHECK
         # -----------------------------
         for item in original_context:
             file_name = item["file"]
@@ -76,9 +112,7 @@ class Reviewer:
 
         return self._result(len(issues) == 0, score, issues)
 
-    # -----------------------------
-    # HELPERS
-    # -----------------------------
+    # ================= HELPERS =================
 
     def _parse_output(self, output: str) -> Dict[str, str]:
         files = {}
@@ -105,6 +139,28 @@ class Reviewer:
             files[current_file] = "\n".join(code_lines).strip()
 
         return files
+
+    def _parse_edit_output(self, output: str) -> Dict[str, str]:
+        lines = output.splitlines()
+
+        file_name = None
+        code_lines = []
+        mode = False
+
+        for line in lines:
+            if line.strip().startswith("EDIT:"):
+                file_name = line.replace("EDIT:", "").strip()
+
+            elif line.strip().startswith("CODE:"):
+                mode = True
+
+            elif mode:
+                code_lines.append(line)
+
+        if not file_name or not code_lines:
+            raise ValueError("Invalid EDIT structure")
+
+        return {file_name: "\n".join(code_lines)}
 
     def _major_change(self, old: str, new: str) -> bool:
         try:
@@ -151,8 +207,4 @@ class Reviewer:
         return "\n".join(line.strip() for line in code.splitlines() if line.strip())
 
     def _result(self, valid: bool, score: int, issues: List[str]) -> Dict:
-        return {
-            "valid": valid,
-            "score": score,
-            "issues": issues
-        }
+        return {"valid": valid, "score": score, "issues": issues}

@@ -26,6 +26,10 @@ class PromptBuilder:
         # -----------------------------
         prompt += f"TASK:\n{task}\n\n"
 
+        prompt += "DEFAULT BEHAVIOR:\n"
+        prompt += "- Assume NO change is required unless absolutely necessary\n"
+        prompt += "- Prefer returning original code\n\n"
+
         # -----------------------------
         # 🔥 CRITICAL SAFETY RULES
         # -----------------------------
@@ -35,6 +39,12 @@ class PromptBuilder:
         prompt += "- DO NOT rewrite full functions\n"
         prompt += "- DO NOT rename functions\n"
         prompt += "- DO NOT introduce new variables unless necessary\n\n"
+
+        prompt += "- NEVER change string literals (e.g., 'hello' must remain 'hello')\n"
+        prompt += "- NEVER change return values\n"
+        prompt += "- If a function returns a constant → DO NOT modify it\n"
+        prompt += "- DO NOT optimize or improve logic\n"
+        prompt += "- DO NOT simplify expressions\n\n"
 
         # -----------------------------
         # HARD CONSTRAINTS
@@ -78,22 +88,41 @@ class PromptBuilder:
             prompt += item["code"] + "\n"
 
         # -----------------------------
-        # OUTPUT FORMAT
+        # 🔥 FUNCTION DETECTION
         # -----------------------------
-        prompt += "\nOUTPUT FORMAT (MANDATORY):\n"
+        has_functions = any(item.get("functions") for item in context)
+
+        if has_functions:
+            prompt += "\nIMPORTANT:\n"
+            prompt += "This task involves function modification.\n"
+            prompt += "You MUST use EDIT format ONLY.\n"
+            prompt += "FILE format is STRICTLY FORBIDDEN.\n\n"
+
+        prompt += "\nOUTPUT FORMAT (STRICT):\n"
+
+        if has_functions:
+            prompt += "MANDATORY:\n"
+            prompt += "- Use ONLY EDIT format\n"
+            prompt += "- DO NOT output FILE format\n\n"
+        else:
+            prompt += "MANDATORY:\n"
+            prompt += "- Use FILE format\n\n"
+
+        prompt += "EDIT FORMAT:\n"
+        prompt += "EDIT: <filename>\n"
+        prompt += "TYPE: replace_function\n"
+        prompt += "TARGET: <function_name>\n"
+        prompt += "CODE:\n"
+        prompt += "<new function code>\n\n"
+
+        prompt += "FILE FORMAT:\n"
         prompt += "FILE: <filename>\n"
         prompt += "<code>\n\n"
 
-        prompt += "RULES:\n"
-        prompt += "1. Output ONLY modified files\n"
-        prompt += "2. NO explanations\n"
-        prompt += "3. NO markdown\n"
-        prompt += "4. NO extra text\n"
-        prompt += "5. If no changes → OUTPUT NOTHING\n"
-
-        prompt += "\nFINAL REMINDER:\n"
-        prompt += "Every output MUST start with 'FILE: <filename>'\n"
-        prompt += "Each file must appear EXACTLY once\n"
-        prompt += "No duplicate files\n"
+        prompt += "CRITICAL RULES:\n"
+        prompt += "- NEVER mix FILE and EDIT\n"
+        prompt += "- If EDIT is used → NO FILE allowed\n"
+        prompt += "- If you include FILE with EDIT → OUTPUT IS INVALID\n"
+        prompt += "- If unsure → OUTPUT NOTHING\n"
 
         return prompt

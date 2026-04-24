@@ -2,12 +2,6 @@ from typing import Dict, Any, List
 
 
 class WorkflowState:
-    """
-    Central state shared across all nodes.
-
-    This is the CORE of LangGraph-style design.
-    """
-
     def __init__(self, query: str):
         self.query = query
         self.selected_files: List[str] = []
@@ -18,6 +12,13 @@ class WorkflowState:
         self.review: Dict = {}
         self.feedback: str = ""
         self.success: bool = False
+
+        # 🔥 Existing
+        self.retry_count: int = 0
+        self.error_type: str = ""
+
+        # 🔥 NEW (Day 20)
+        self.confidence: int = 0
 
 
 class Workflow:
@@ -31,17 +32,6 @@ class Workflow:
         reviewer,
         editor,
     ):
-        """
-        LangGraph-style workflow engine.
-
-        Nodes:
-        → select_context
-        → plan
-        → execute_step
-        → review
-        → apply
-        """
-
         self.budget = budget
         self.selector = selector
         self.builder = builder
@@ -99,6 +89,29 @@ class Workflow:
         return state
 
     # =========================================================
+    # ERROR CLASSIFIER
+    # =========================================================
+    def classify_error(self, state: WorkflowState):
+        issues = state.review.get("issues", [])
+
+        if not issues:
+            state.error_type = ""
+            return state
+
+        issue_text = " ".join(issues).lower()
+
+        if "format" in issue_text:
+            state.error_type = "format"
+        elif "logic" in issue_text:
+            state.error_type = "logic"
+        elif "syntax" in issue_text:
+            state.error_type = "syntax"
+        else:
+            state.error_type = "unknown"
+
+        return state
+
+    # =========================================================
     # NODE 4: REVIEW
     # =========================================================
     def review(self, state: WorkflowState):
@@ -109,6 +122,7 @@ class Workflow:
         if not state.output.strip():
             print("\n🤖 OUTPUT: (no changes)")
             state.success = True
+            state.confidence = 2  # 🔥 treat no-op as high confidence
             return state
 
         state.review = self.reviewer.review(step_context, state.output)
@@ -117,52 +131,95 @@ class Workflow:
 
         state.success = state.review["valid"]
 
+        # 🔥 CONFIDENCE
+        state.confidence = state.review["score"]
+
+        print(f"🎯 Confidence: {state.confidence}")
+
+        if state.confidence >= 2:
+            print("✅ High confidence output")
+
+        state = self.classify_error(state)
+
+        print(f"⚠️ Error Type: {state.error_type}")
+
         return state
 
     # =========================================================
-    # NODE 5: APPLY CHANGES
+    # SMART RETRY HANDLER
+    # =========================================================
+    def handle_retry(self, state: WorkflowState):
+        state.retry_count += 1
+
+        print(f"\n🔁 Retry Count: {state.retry_count}")
+
+        # 🔥 SMART FEEDBACK
+        if state.error_type == "format":
+            state.feedback = "Fix ONLY format. Use EDIT format correctly."
+
+        elif state.error_type == "logic":
+            state.feedback = "Revert logic. DO NOT change behavior."
+
+        elif state.error_type == "syntax":
+            state.feedback = "Fix syntax errors ONLY."
+
+        else:
+            state.feedback = "Fix issues: " + str(state.review["issues"])
+
+        print("🧠 Feedback:", state.feedback)
+
+        return state
+
+    # =========================================================
+    # APPLY
     # =========================================================
     def apply(self, state: WorkflowState):
         if state.success:
-            print("\n✅ APPLYING CHANGES")
-            self.editor.apply_changes(state.output)
+            print("\n🔷 NODE: edit")
+            self.editor.apply_patch(state.output)
+            print("\n💾 Changes Applied")
 
         return state
 
     # =========================================================
-    # MAIN RUN FUNCTION
+    # MAIN RUN
     # =========================================================
     def run(self, query: str):
         print(f"\n🔍 Query: {query}")
 
         state = WorkflowState(query)
 
-        # Step 1: context
         state = self.select_context(state)
-
-        # Step 2: plan
         state = self.plan(state)
 
-        # Step 3: execute steps
         for step in state.steps:
             print(f"\n🪜 STEP: {step}")
 
             state.current_step = step
-            attempt = 0
+            state.retry_count = 0
+            state.feedback = ""
+
             MAX_RETRIES = 3
 
-            while attempt < MAX_RETRIES:
+            while state.retry_count < MAX_RETRIES:
 
                 state = self.execute_step(state)
                 state = self.review(state)
 
+                # 🔥 DAY 20 CORE LOGIC
                 if state.success:
                     state = self.apply(state)
                     break
 
-                print("\n🔁 Retrying...\n")
-                state.feedback = str(state.review["issues"])
-                attempt += 1
+                # 🔥 LOW CONFIDENCE → retry
+                if state.confidence <= 1:
+                    print("\n🔷 NODE: retry")
+                    state = self.handle_retry(state)
+                    continue
+
+                # 🔥 HIGH CONFIDENCE BUT INVALID (rare case)
+                print("\n⚠️ Unexpected state → forcing retry")
+                state = self.handle_retry(state)
 
             if not state.success:
                 print("\n❌ STEP FAILED")

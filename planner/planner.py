@@ -4,75 +4,72 @@ from typing import List, Dict, Any
 class Planner:
     def __init__(self, codebase_map: Dict[str, Any]):
         """
-        Planner (Day 13 - STABLE VERSION)
+        Planner (Day 21 - Multi-file consistency)
 
         Responsibilities:
-        → Select ONE primary file
-        → Create ONE safe step
-
-        WHY?
-        → Multi-step + multi-file is unstable right now
-        → We stabilize system first, then scale later
+        → Identify primary file
+        → Expand dependencies
+        → Generate ordered multi-file steps
         """
 
         self.map = codebase_map
 
     def create_plan(self, query: str, selected_files: List[str]) -> List[Dict]:
-        """
-        Returns a SAFE plan.
-
-        Output:
-        [
-            {"type": "refactor", "target": "file.py"}
-        ]
-        """
-
         if not selected_files:
             return []
 
         # -----------------------------
-        # STEP 1: Identify PRIMARY file
+        # STEP 1: PRIMARY FILE
         # -----------------------------
         primary = self._get_primary_file(query, selected_files)
 
         # -----------------------------
-        # STEP 2: Infer step type
+        # STEP 2: STEP TYPE
         # -----------------------------
         step_type = self._infer_step_type(query)
 
         # -----------------------------
-        # STEP 3: Return SINGLE STEP
+        # STEP 3: DEPENDENCY EXPANSION
         # -----------------------------
-        return [{"type": step_type, "target": primary}]
+        related_files = self._expand_dependencies(primary)
+
+        # Keep only selected files (important constraint)
+        related_files = [f for f in related_files if f in selected_files]
+
+        # Ensure primary is first
+        if primary not in related_files:
+            related_files.insert(0, primary)
+
+        # -----------------------------
+        # STEP 4: BUILD MULTI-STEP PLAN
+        # -----------------------------
+        steps = []
+
+        # 🔥 Step 1 → modify primary
+        steps.append({"type": step_type, "target": primary})
+
+        # 🔥 Step 2+ → update usage in dependents
+        for file in related_files:
+            if file == primary:
+                continue
+
+            steps.append({"type": "update_usage", "target": file})
+
+        return steps
 
     # =========================================================
     # HELPERS
     # =========================================================
 
     def _infer_step_type(self, query: str) -> str:
-        """
-        Decide step type based on query.
-        """
-
         query = query.lower()
 
         if "rename" in query:
             return "modify_function"
 
-        if "optimize" in query:
-            return "refactor"
-
         return "refactor"
 
     def _get_primary_file(self, query: str, selected_files: List[str]) -> str:
-        """
-        Choose MOST relevant file.
-
-        Strategy:
-        → Function match (HIGH priority)
-        → File name match (LOW priority)
-        """
-
         keywords = query.lower().split()
 
         best_file = selected_files[0]
@@ -81,28 +78,32 @@ class Planner:
         for file in selected_files:
             score = 0
 
-            # -----------------------------
-            # 1. FILE NAME MATCH
-            # -----------------------------
+            # File name match
             for kw in keywords:
                 if kw in file.lower():
                     score += 2
 
-            # -----------------------------
-            # 2. FUNCTION MATCH (STRONG SIGNAL)
-            # -----------------------------
+            # Function match
             functions = self.map.get("ast", {}).get(file, {}).get("functions", [])
 
             for func in functions:
                 for kw in keywords:
                     if kw in func["name"].lower():
-                        score += 5  # 🔥 VERY IMPORTANT
+                        score += 5
 
-            # -----------------------------
-            # Track best
-            # -----------------------------
             if score > best_score:
                 best_score = score
                 best_file = file
 
         return best_file
+
+    def _expand_dependencies(self, file: str) -> List[str]:
+        """
+        Get forward + reverse dependencies
+        """
+
+        deps = self.map.get("dependencies", {}).get(file, [])
+
+        reverse = [f for f, d in self.map.get("dependencies", {}).items() if file in d]
+
+        return list(set([file] + deps + reverse))
